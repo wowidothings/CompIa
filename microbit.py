@@ -1,98 +1,137 @@
+# micro:bit v2 - Complete Kinematics Data Collector
 from microbit import *
-import ble_uart
+import radio
 import math
 
-# --- CONFIGURATION ---
+# ========== CONFIGURATION ==========
 CALIBRATION_SAMPLES = 100  # Samples for baseline calibration
-CALIBRATION_DELAY_MS = 3000  # 3 seconds for manual calibration
-SAMPLE_RATE_MS = 300  #~30 Hz (adjustable)
-DATA_HEADER = "ax,ay,az,vx,vy,vz,px,py,pz,t"
+SAMPLE_RATE_MS = 100       # ~10 Hz data collection
+CALIBRATE_HOLD_MS = 3000   # 3s hold for A+B calibration
 
-# --- GLOBAL VARIABLES ---
-offset = (0, 0, 0)  # Calibration offsets
-velocity = [0.0, 0.0, 0.0]
-position = [0.0, 0.0, 0.0]
-last_time = 0
-uart = ble_uart.BLEUART()
+# ========== BLE UART SETUP ==========
+class BLEUART:
+    def __init__(self):
+        radio.on()
+        radio.config(
+            group=0,
+            power=6,
+            address=0x75626974,
+            queue=10,
+            data_rate=radio.RATE_1MBIT
+        )
+        self.rx_buffer = []
 
-# --- CALIBRATION ---
-def calibrate():
-    global offset
-    display.show("C")
-    x, y, z = [], [], []
-    # Average accelerometer readings while stationary
-    for _ in range(CALIBRATION_SAMPLES):
-        acc = accelerometer.get_values()
-        x.append(acc[0])
-        y.append(acc[1])
-        z.append(acc[2])
-        sleep(10)
-    offset = (
-        sum(x) / CALIBRATION_SAMPLES,
-        sum(y) / CALIBRATION_SAMPLES,
-        sum(z) / CALIBRATION_SAMPLES
-    )
-    display.show(Image.YES)
+    def any(self):
+        return len(self.rx_buffer) > 0
 
-# --- INTEGRATION FUNCTIONS ---
-def integrate(ax, ay, az, dt):
-    global velocity, position
-    # Update velocity (v = v0 + a*dt)
-    velocity[0] += (ax - offset[0]) * dt
-    velocity[1] += (ay - offset[1]) * dt
-    velocity[2] += (az - offset[2]) * dt
-    # Update position (p = p0 + v*dt)
-    position[0] += velocity[0] * dt
-    position[1] += velocity[1] * dt
-    position[2] += velocity[2] * dt
+    def read(self):
+        return self.rx_buffer.pop(0) if self.any() else None
 
-# --- MAIN LOOP ---
-calibrate()  # Calibrate on boot
+    def send(self, data):
+        radio.send_bytes(data.encode())
+
+    def check_incoming(self):
+        incoming = radio.receive_bytes()
+        if incoming:
+            self.rx_buffer.append(incoming.decode().strip())
+
+# ========== KINEMATICS SYSTEM ==========
+class Kinematics:
+    def __init__(self):
+        self.offset = (0, 0, 0)
+        self.velocity = [0.0, 0.0, 0.0]
+        self.position = [0.0, 0.0, 0.0]
+        self.last_time = 0
+
+    def calibrate(self):
+        display.show("C")
+        x, y, z = [], [], []
+        for _ in range(CALIBRATION_SAMPLES):
+            acc = accelerometer.get_values()
+            x.append(acc[0])
+            y.append(acc[1])
+            z.append(acc[2])
+            sleep(10)
+        self.offset = (
+            sum(x) // CALIBRATION_SAMPLES,
+            sum(y) // CALIBRATION_SAMPLES,
+            sum(z) // CALIBRATION_SAMPLES
+        )
+        display.show(Image.YES)
+
+    def integrate(self, ax, ay, az, dt):
+        # Remove offset and integrate
+        ax_adj = ax - self.offset[0]
+        ay_adj = ay - self.offset[1]
+        az_adj = az - self.offset[2]
+
+        # Update velocity
+        self.velocity[0] += ax_adj * dt
+        self.velocity[1] += ay_adj * dt
+        self.velocity[2] += az_adj * dt
+
+        # Update position
+        self.position[0] += self.velocity[0] * dt
+        self.position[1] += self.velocity[1] * dt
+        self.position[2] += self.velocity[2] * dt
+
+# ========== MAIN PROGRAM ==========
+uart = BLEUART()
+kinematics = Kinematics()
+kinematics.calibrate()
 
 while True:
-    # Manual calibration (hold A+B for 3 seconds)
+    # Handle manual calibration
     if button_a.is_pressed() and button_b.is_pressed():
-        sleep(CALIBRATION_DELAY_MS)
+        sleep(CALIBRATE_HOLD_MS)
         if button_a.is_pressed() and button_b.is_pressed():
-            calibrate()
+            kinematics.calibrate()
             display.scroll("CALIBRATED")
 
-    # Check for incoming BLE commands
+    # Check for BLE commands
+    uart.check_incoming()
     if uart.any():
-        command = uart.read().decode().strip()
-        if command.startswith("START:"):
-            duration = int(command.split(":")[1])
-            
+        cmd = uart.read()
+        if cmd.startswith("START:"):
+            duration = int(cmd.split(":")[1])
+
             # 3-second countdown
             for i in range(3, 0, -1):
                 display.show(str(i))
                 sleep(1000)
             display.clear()
-            
-            # Reset integration variables
-            velocity = [0.0, 0.0, 0.0]
-            position = [0.0, 0.0, 0.0]
+
+            # Reset integration
+            kinematics.velocity = [0.0, 0.0, 0.0]
+            kinematics.position = [0.0, 0.0, 0.0]
             start_time = running_time()
-            last_time = 0
-            
-            # Collect data for <duration> seconds
+
+            # Data collection loop
             while (running_time() - start_time) < duration * 1000:
                 current_time = running_time()
-                dt = (current_time - last_time) / 1000  # Convert to seconds
-                if dt <= 0: dt = 0.001  # Avoid division by zero
-                
-                # Read accelerometer and integrate
+                dt = (current_time - kinematics.last_time) / 1000
+                if dt <= 0: dt = 0.001
+
+                # Get sensor data
                 ax, ay, az = accelerometer.get_values()
-                integrate(ax, ay, az, dt)
-                
-                # Send data via BLE
-                data = f"{ax},{ay},{az},{velocity[0]},{velocity[1]},{velocity[2]},"
-                data += f"{position[0]},{position[1]},{position[2]},{current_time}"
+                kinematics.integrate(ax, ay, az, dt)
+
+                # Format data: ax,ay,az,vx,vy,vz,px,py,pz,timestamp
+                data = (
+                    str(ax) + "," + str(ay) + "," + str(az) + "," +
+                    str(kinematics.velocity[0]) + "," +
+                    str(kinematics.velocity[1]) + "," +
+                    str(kinematics.velocity[2]) + "," +
+                    str(kinematics.position[0]) + "," +
+                    str(kinematics.position[1]) + "," +
+                    str(kinematics.position[2]) + "," +
+                    str(current_time)
+                )
+
                 uart.send(data + "\n")
-                
-                last_time = current_time
+                kinematics.last_time = current_time
                 sleep(SAMPLE_RATE_MS)
-            
+
             display.show(Image.DIAMOND)
             sleep(1000)
             display.clear()

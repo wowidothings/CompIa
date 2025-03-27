@@ -1,6 +1,9 @@
+#main_window.py
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSpinBox, QPushButton, QTabWidget
-from ble_connector import BLEWorker
+from ble_connecter import BLEWorker
 from plotter import LivePlotter
+from history_manager import HistoryDialog
+
 
 class MainWindow(QMainWindow):
     def __init__(self, ble_address):
@@ -9,6 +12,7 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.ble_worker = BLEWorker(ble_address)
         self._setup_ui()
+        self.history_btn.clicked.connect(self.show_history)
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -42,7 +46,8 @@ class MainWindow(QMainWindow):
         # Connect Signals
         self.start_btn.clicked.connect(self.start_collection)
         self.ble_worker.data_received.connect(self.realtime_plot.update_plot)
-        self.ble_worker.connected.connect(self._handle_connection)
+        self.ble_worker.connection_changed.connect(self._handle_connection)
+
 
     def start_collection(self):
         self.ble_worker.set_duration(self.duration_spin.value())
@@ -51,3 +56,21 @@ class MainWindow(QMainWindow):
     def _handle_connection(self, is_connected):
         self.start_btn.setEnabled(not is_connected)
         self.duration_spin.setEnabled(not is_connected)
+    # In MainWindow class
+    def show_history(self):
+        dialog = HistoryDialog(self)
+        dialog.exec()
+
+    def load_historical_data(self, timestamp):
+        """Load and plot historical data"""
+        # Load CSV
+        df = pd.read_csv(f"data/{timestamp}_session.csv")
+        
+        # Convert to lists for plotting
+        time = df["t"].tolist()
+        accel = df[["ax", "ay", "az"]].values.tolist()
+        velocity = df[["vx", "vy", "vz"]].values.tolist()
+        position = df[["px", "py", "pz"]].values.tolist()
+        
+        # Update plots
+        self.history_plot.update_historical_plot(time, accel, velocity, position)
