@@ -1,0 +1,15 @@
+3 transcripts
+880 words left for C
+criterion b a and c test plans and success critera has to align
+criterion c, integrate the techniques in the explanation. say where each one is used in the writing
+criterion b, class, uml, flowchart, wireframes/gui,Early UI Prototype if you can, Data flow diagram, Structure chart, 
+record of tasks put in parts of working on criterion b and getting feedback in like the middle rather than the end after
+https://github.com/graded-cs-resources/IB-Computer-Science-Notes/blob/main/resources/sample_ia.md
+https://www.clastify.com/ia/computer-science/64a75426701b5600139b4f40
+table of contents for criterion b
+menu navigation and page structure for cri b
+criterion e talk more about what mobley giving feedback
+
+current word count:
+834 C  +   197 B  +  A 451+ E 447 = 1959
+lower c w/ figures and put more in a success

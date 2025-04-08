@@ -1,39 +1,44 @@
-# micro:bit v2 - Complete Kinematics Data Collector
 from microbit import *
 import radio
 import math
 
 # ========== CONFIGURATION ==========
-CALIBRATION_SAMPLES = 100  # Samples for baseline calibration
-SAMPLE_RATE_MS = 100       # ~10 Hz data collection
-CALIBRATE_HOLD_MS = 3000   # 3s hold for A+B calibration
+CALIBRATION_SAMPLES = 100
+SAMPLE_RATE_MS = 100
+CALIBRATE_HOLD_MS = 3000
+BLE_CHANNEL = 7
+MAX_PACKET_SIZE = 20
 
-# ========== BLE UART SETUP ==========
+# ========== STABLE BLE IMPLEMENTATION ==========
 class BLEUART:
     def __init__(self):
+        self.connected = False
         radio.on()
         radio.config(
             group=0,
             power=6,
             address=0x75626974,
-            queue=10,
-            data_rate=radio.RATE_1MBIT
+            queue=20,
+            data_rate=radio.RATE_1MBIT,
+            channel=BLE_CHANNEL
         )
         self.rx_buffer = []
 
-    def any(self):
-        return len(self.rx_buffer) > 0
+    def check_connection(self):
+        try:
+            # Connection state detection
+            test_packet = radio.receive_bytes()
+            self.connected = test_packet is not None
+            if test_packet:
+                self.rx_buffer.append(test_packet.decode().strip())
+        except:
+            self.connected = False
 
-    def read(self):
-        return self.rx_buffer.pop(0) if self.any() else None
-
-    def send(self, data):
-        radio.send_bytes(data.encode())
-
-    def check_incoming(self):
-        incoming = radio.receive_bytes()
-        if incoming:
-            self.rx_buffer.append(incoming.decode().strip())
+    def send_safe(self, data):
+        data = data.encode()
+        for i in range(0, len(data), MAX_PACKET_SIZE):
+            radio.send_bytes(data[i:i+MAX_PACKET_SIZE])
+            sleep(10)
 
 # ========== KINEMATICS SYSTEM ==========
 class Kinematics:
@@ -128,7 +133,7 @@ while True:
                     str(current_time)
                 )
 
-                uart.send(data + "\n")
+                uart.send_safe(data + "\n")
                 kinematics.last_time = current_time
                 sleep(SAMPLE_RATE_MS)
 
